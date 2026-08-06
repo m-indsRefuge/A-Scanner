@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,10 +11,18 @@ from a_scanner.models import DetectedProject, Ecosystem
 DEFAULT_EXCLUDES = (
     ".git",
     ".venv",
+    "venv",
     "node_modules",
     "dist",
     "build",
     ".a-scanner",
+    ".pytest-tmp",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    "__pycache__",
+    ".tox",
+    ".nox",
 )
 
 DEFAULT_WARNING_PATTERNS = (
@@ -45,6 +54,32 @@ class ScannerConfig:
     validation_commands: tuple[ValidationCommand, ...] = field(default_factory=tuple)
 
 
+def _merge_excludes(configured: object) -> tuple[str, ...]:
+    if configured is None:
+        additions: list[object] = []
+    elif isinstance(configured, list):
+        additions = configured
+    else:
+        raise ConfigError("[scan].exclude must be an array of non-empty strings.")
+
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    for index, value in enumerate((*DEFAULT_EXCLUDES, *additions), start=1):
+        if not isinstance(value, str) or not value.strip():
+            configured_index = index - len(DEFAULT_EXCLUDES)
+            raise ConfigError(
+                f"[scan].exclude entry {configured_index} must be a non-empty string."
+            )
+
+        key = os.path.normcase(value)
+        if key not in seen:
+            seen.add(key)
+            merged.append(value)
+
+    return tuple(merged)
+
+
 def load_config(repository: Path, config_path: Path | None) -> ScannerConfig:
     path = config_path or repository / "a-scanner.toml"
     if not path.is_absolute():
@@ -59,7 +94,7 @@ def load_config(repository: Path, config_path: Path | None) -> ScannerConfig:
     if schema_version != 1:
         raise ConfigError(f"Unsupported a-scanner.toml schema_version: {schema_version}")
 
-    excludes = tuple(data.get("scan", {}).get("exclude", DEFAULT_EXCLUDES))
+    excludes = _merge_excludes(data.get("scan", {}).get("exclude"))
     patterns = tuple(data.get("warning", {}).get("patterns", DEFAULT_WARNING_PATTERNS))
 
     commands: list[ValidationCommand] = []

@@ -43,7 +43,7 @@ dev = [
 packages = ["src/a_scanner"]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q --basetemp=.pytest-tmp"
 testpaths = ["tests"]
 
 [tool.ruff]

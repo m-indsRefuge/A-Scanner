@@ -11,3 +11,4 @@ build/
 .a-scanner/
 .DS_Store
 Thumbs.db
+.pytest-tmp/

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/m-indsRefuge/A-Scanner/schemas/scan-report.schema.json",
+  "title": "A-Scanner Scan Report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tool_version",
+    "run_id",
+    "repository",
+    "mode",
+    "status",
+    "projects_before",
+    "warnings_before",
+    "validation"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "tool_version": { "type": "string" },
+    "run_id": { "type": "string" },
+    "repository": { "type": "string" },
+    "mode": { "enum": ["check", "apply"] },
+    "status": { "type": "string" },
+    "projects_before": { "type": "array" },
+    "projects_after": { "type": "array" },
+    "warnings_before": { "type": "array" },
+    "warnings_after": { "type": "array" },
+    "validation": { "type": "array" },
+    "events": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

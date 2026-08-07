@@ -187,7 +187,7 @@ def test_baseline_validation_tracked_change_blocks_updates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    code = "from pathlib import Path; Path('tracked.txt').write_text('changed\\n', encoding='utf-8')"
+    code = "open('tracked.txt', 'w', encoding='utf-8').write('changed\\n')"
     repository = _repository(
         tmp_path,
         project=True,

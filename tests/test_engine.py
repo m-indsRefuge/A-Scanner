@@ -237,11 +237,17 @@ def test_baseline_validation_tracked_change_blocks_updates(
     )
     _external_reports(repository, monkeypatch)
     state = _install_fake_uv_adapter(monkeypatch)
+    initial_head = inspect_git(repository, CommandRunner()).head
 
     report = execute(ScanOptions(repository=repository, mode=Mode.APPLY))
 
     assert report.status == Status.BASELINE_FAILED.value
+    assert report.rollback_verified is True
     assert state["updates"] == 0
+    final_state = inspect_git(repository, CommandRunner())
+    assert final_state.head == initial_head
+    assert final_state.clean
+    assert (repository / "tracked.txt").read_text(encoding="utf-8") == "before\n"
     assert any("baseline" in event.lower() and "git" in event.lower() for event in report.events)
 
 
@@ -256,11 +262,16 @@ def test_baseline_validation_head_change_blocks_updates(
     )
     _external_reports(repository, monkeypatch)
     state = _install_fake_uv_adapter(monkeypatch)
+    initial_head = inspect_git(repository, CommandRunner()).head
 
     report = execute(ScanOptions(repository=repository, mode=Mode.APPLY))
 
     assert report.status == Status.BASELINE_FAILED.value
+    assert report.rollback_verified is True
     assert state["updates"] == 0
+    final_state = inspect_git(repository, CommandRunner())
+    assert final_state.head == initial_head
+    assert final_state.clean
     assert any("head" in event.lower() for event in report.events)
 
 

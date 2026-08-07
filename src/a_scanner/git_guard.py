@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,12 +58,71 @@ def changed_files(root: Path, runner: CommandRunner) -> list[str]:
         timeout_seconds=30,
     )
     if not result.succeeded:
-        return []
+        raise GitGuardError("Unable to inspect Git working-tree changes.")
     paths: list[str] = []
     for line in result.stdout.splitlines():
         if len(line) >= 4:
             paths.append(line[3:].strip())
     return sorted(set(paths))
+
+
+def fingerprint_worktree(root: Path, runner: CommandRunner) -> str:
+    root = root.resolve()
+    digest = hashlib.sha256()
+
+    head_result = runner.run(["git", "rev-parse", "HEAD"], cwd=root, timeout_seconds=30)
+    if not head_result.succeeded:
+        raise GitGuardError("Unable to read Git HEAD for worktree fingerprinting.")
+    _update_digest(digest, b"HEAD", head_result.stdout.strip().encode("utf-8", errors="replace"))
+
+    diff_result = runner.run(
+        ["git", "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--"],
+        cwd=root,
+        timeout_seconds=120,
+    )
+    if not diff_result.succeeded:
+        raise GitGuardError("Unable to inspect tracked Git changes for worktree fingerprinting.")
+    _update_digest(digest, b"DIFF", diff_result.stdout.encode("utf-8", errors="replace"))
+
+    untracked_result = runner.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=root,
+        timeout_seconds=30,
+    )
+    if not untracked_result.succeeded:
+        raise GitGuardError("Unable to inspect untracked files for worktree fingerprinting.")
+
+    relative_paths = sorted(path for path in untracked_result.stdout.split("\0") if path)
+    for relative in relative_paths:
+        encoded_path = relative.encode("utf-8", errors="replace")
+        _update_digest(digest, b"PATH", encoded_path)
+        path = root / relative
+        try:
+            if path.is_symlink():
+                _update_digest(
+                    digest,
+                    b"SYMLINK",
+                    str(path.readlink()).encode("utf-8", errors="replace"),
+                )
+            elif path.is_file():
+                digest.update(b"FILE\0")
+                with path.open("rb") as handle:
+                    while chunk := handle.read(1024 * 1024):
+                        digest.update(chunk)
+                digest.update(b"\0")
+            else:
+                _update_digest(digest, b"OTHER", b"")
+        except OSError as exc:
+            raise GitGuardError(f"Unable to fingerprint untracked path: {relative}") from exc
+
+    return digest.hexdigest()
+
+
+def _update_digest(digest, label: bytes, value: bytes) -> None:
+    digest.update(label)
+    digest.update(b"\0")
+    digest.update(value)
+    digest.update(b"\0")
 
 
 def rollback(root: Path, expected_head: str, runner: CommandRunner) -> bool:
@@ -74,5 +134,8 @@ def rollback(root: Path, expected_head: str, runner: CommandRunner) -> bool:
     if not clean.succeeded:
         return False
 
-    state = inspect_git(root, runner)
+    try:
+        state = inspect_git(root, runner)
+    except GitGuardError:
+        return False
     return state.head == expected_head and state.clean

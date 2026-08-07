@@ -283,7 +283,8 @@ def test_package_update_unrelated_change_triggers_rollback(
     assert report.rollback_verified is True
     assert inspect_git(repository, CommandRunner()).head == initial_head
     assert inspect_git(repository, CommandRunner()).clean
-    assert any("unexpected" in event.lower() and "update" in event.lower() for event in report.events)
+    events = [event.lower() for event in report.events]
+    assert any("unexpected" in event and "update" in event for event in events)
 
 
 def test_package_update_head_change_triggers_rollback(

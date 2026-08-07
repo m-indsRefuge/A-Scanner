@@ -13,7 +13,13 @@ from a_scanner.config import (
     load_config,
 )
 from a_scanner.detector import discover_projects
-from a_scanner.git_guard import GitGuardError, changed_files, inspect_git, rollback
+from a_scanner.git_guard import (
+    GitGuardError,
+    changed_files,
+    fingerprint_worktree,
+    inspect_git,
+    rollback,
+)
 from a_scanner.models import (
     DetectedProject,
     Ecosystem,
@@ -69,9 +75,21 @@ def execute(options: ScanOptions) -> ScanReport:
         report.git_head = git_state.head
         report.initially_clean = git_state.clean
 
+        if options.report_directory is not None and _report_directory_is_inside_repository(
+            repository,
+            options.report_directory,
+        ):
+            report.events.append("Report directory must be outside the target repository.")
+            return _finish(report, repository, None)
+
         config = load_config(repository, options.config_path)
         projects = discover_projects(repository, config.excludes)
         if not projects:
+            if options.mode is Mode.APPLY:
+                report.events.append(
+                    "Apply mode requires at least one supported locked uv or npm project."
+                )
+                return _finish(report, repository, options.report_directory)
             report.events.append("No supported locked uv or npm projects were detected.")
             report.status = Status.CHECK_COMPLETED.value
             return _finish(report, repository, options.report_directory)
@@ -118,6 +136,7 @@ def execute(options: ScanOptions) -> ScanReport:
             )
             return _finish(report, repository, options.report_directory)
 
+        baseline_fingerprint = fingerprint_worktree(repository, runner)
         baseline = _run_validation(
             repository,
             validation_commands,
@@ -126,11 +145,26 @@ def execute(options: ScanOptions) -> ScanReport:
             config=config,
             report=report,
         )
-        if not baseline:
+        baseline_integrity, baseline_integrity_event = _validation_integrity(
+            repository,
+            runner,
+            expected_head=git_state.head,
+            expected_fingerprint=baseline_fingerprint,
+            phase="Baseline",
+        )
+        if baseline_integrity_event:
+            report.events.append(baseline_integrity_event)
+        if not baseline or not baseline_integrity:
             report.status = Status.BASELINE_FAILED.value
-            report.events.append(
-                "Baseline validation failed; no dependency updates were attempted."
-            )
+            if not baseline:
+                report.events.append(
+                    "Baseline validation failed; no dependency updates were attempted."
+                )
+            else:
+                report.events.append(
+                    "Baseline validation changed Git-visible repository state; "
+                    "no dependency updates were attempted."
+                )
             return _finish(report, repository, options.report_directory)
 
         update_commands = []
@@ -175,6 +209,8 @@ def execute(options: ScanOptions) -> ScanReport:
             )
         )
 
+        post_update_state = inspect_git(repository, runner)
+        post_update_fingerprint = fingerprint_worktree(repository, runner)
         post = _run_validation(
             repository,
             validation_commands,
@@ -183,18 +219,33 @@ def execute(options: ScanOptions) -> ScanReport:
             config=config,
             report=report,
         )
-        report.changed_files = changed_files(repository, runner)
+        post_integrity, post_integrity_event = _validation_integrity(
+            repository,
+            runner,
+            expected_head=post_update_state.head,
+            expected_fingerprint=post_update_fingerprint,
+            phase="Post-update",
+        )
+        if post_integrity_event:
+            report.events.append(post_integrity_event)
 
-        if not post:
-            verified = rollback(repository, git_state.head, runner)
-            report.rollback_verified = verified
-            report.status = (
-                Status.VALIDATION_FAILED_ROLLED_BACK.value
-                if verified
-                else Status.ROLLBACK_FAILED.value
+        changes_inspected = True
+        try:
+            report.changed_files = changed_files(repository, runner)
+        except GitGuardError as exc:
+            changes_inspected = False
+            report.events.append(f"Post-update Git change inspection failed: {exc}")
+
+        if not post or not post_integrity or not changes_inspected:
+            if not post:
+                report.events.append("Post-update validation command failed.")
+            return _rollback_after_validation_failure(
+                report,
+                repository,
+                git_state.head,
+                runner,
+                options.report_directory,
             )
-            report.events.append("Post-update validation failed; rollback was attempted.")
-            return _finish(report, repository, options.report_directory)
 
         report.rollback_verified = None
         report.status = Status.UPDATED.value if report.changed_files else Status.NO_CHANGES.value
@@ -203,6 +254,48 @@ def execute(options: ScanOptions) -> ScanReport:
     except (GitGuardError, OSError, ValueError) as exc:
         report.events.append(f"{type(exc).__name__}: {exc}")
         return _finish(report, repository, options.report_directory)
+
+
+def _report_directory_is_inside_repository(repository: Path, directory: Path) -> bool:
+    resolved = directory.expanduser().resolve()
+    return resolved == repository or repository in resolved.parents
+
+
+def _validation_integrity(
+    repository: Path,
+    runner: CommandRunner,
+    *,
+    expected_head: str,
+    expected_fingerprint: str,
+    phase: str,
+) -> tuple[bool, str | None]:
+    try:
+        state = inspect_git(repository, runner)
+        if state.head != expected_head:
+            return False, f"{phase} validation changed Git HEAD."
+        fingerprint = fingerprint_worktree(repository, runner)
+    except GitGuardError as exc:
+        return False, f"{phase} validation Git integrity inspection failed: {exc}"
+
+    if fingerprint != expected_fingerprint:
+        return False, f"{phase} validation changed Git-visible repository content."
+    return True, None
+
+
+def _rollback_after_validation_failure(
+    report: ScanReport,
+    repository: Path,
+    expected_head: str,
+    runner: CommandRunner,
+    report_directory: Path | None,
+) -> ScanReport:
+    verified = rollback(repository, expected_head, runner)
+    report.rollback_verified = verified
+    report.status = (
+        Status.VALIDATION_FAILED_ROLLED_BACK.value if verified else Status.ROLLBACK_FAILED.value
+    )
+    report.events.append("Post-update validation failed; rollback was attempted.")
+    return _finish(report, repository, report_directory)
 
 
 def _validation_commands(

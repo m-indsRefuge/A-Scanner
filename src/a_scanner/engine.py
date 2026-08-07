@@ -316,9 +316,7 @@ def _package_update_integrity(
     except GitGuardError as exc:
         return False, f"Package update Git integrity inspection failed: {exc}"
 
-    unexpected = sorted(
-        path for path in changed if path.replace("\\", "/") not in allowed_files
-    )
+    unexpected = sorted(path for path in changed if path.replace("\\", "/") not in allowed_files)
     if unexpected:
         return (
             False,

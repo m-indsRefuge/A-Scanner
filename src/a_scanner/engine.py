@@ -158,16 +158,23 @@ def execute(options: ScanOptions) -> ScanReport:
         if baseline_integrity_event:
             report.events.append(baseline_integrity_event)
         if not baseline or not baseline_integrity:
-            report.status = Status.BASELINE_FAILED.value
             if not baseline:
                 report.events.append(
                     "Baseline validation failed; no dependency updates were attempted."
                 )
-            else:
+            if not baseline_integrity:
                 report.events.append(
                     "Baseline validation changed Git-visible repository state; "
                     "no dependency updates were attempted."
                 )
+                return _rollback_after_baseline_integrity_failure(
+                    report,
+                    repository,
+                    git_state.head,
+                    runner,
+                    options.report_directory,
+                )
+            report.status = Status.BASELINE_FAILED.value
             return _finish(report, repository, options.report_directory)
 
         allowed_update_files = _allowed_update_files(repository, projects)
@@ -344,6 +351,20 @@ def _validation_integrity(
     if fingerprint != expected_fingerprint:
         return False, f"{phase} validation changed Git-visible repository content."
     return True, None
+
+
+def _rollback_after_baseline_integrity_failure(
+    report: ScanReport,
+    repository: Path,
+    expected_head: str,
+    runner: CommandRunner,
+    report_directory: Path | None,
+) -> ScanReport:
+    verified = rollback(repository, expected_head, runner)
+    report.rollback_verified = verified
+    report.status = Status.BASELINE_FAILED.value if verified else Status.ROLLBACK_FAILED.value
+    report.events.append("Baseline validation integrity failure; rollback was attempted.")
+    return _finish(report, repository, report_directory)
 
 
 def _rollback_after_update_failure(

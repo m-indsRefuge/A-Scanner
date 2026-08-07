@@ -164,7 +164,7 @@ def load_config(repository: Path, config_path: Path | None) -> ScannerConfig:
         data = tomllib.load(handle)
 
     schema_version = data.get("schema_version", 1)
-    if schema_version != 1:
+    if type(schema_version) is not int or schema_version != 1:
         raise ConfigError(f"Unsupported a-scanner.toml schema_version: {schema_version}")
 
     scan = _table(data, "scan")

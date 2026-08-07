@@ -103,16 +103,22 @@ path-case semantics. A-Scanner does not read or interpret `.gitignore` files for
 2. A clean working tree.
 3. At least one supported locked uv or npm project.
 4. A passing baseline validation gate that leaves Git-visible state unchanged.
-5. A passing post-update validation gate that does not change the package-update state.
+5. Native package updates that keep `HEAD` unchanged and modify only detected manifest/lockfile
+   paths in Git-visible state.
+6. A passing post-update validation gate that leaves the package-update state unchanged.
 
-A-Scanner fingerprints tracked changes and non-ignored untracked files around validation. A
-validation command that changes `HEAD` or Git-visible content is rejected. After dependency
-updates, such a validation integrity failure triggers rollback just like a failed validation
-command.
+A-Scanner fingerprints tracked changes and non-ignored untracked files around validation. If
+baseline validation changes `HEAD` or Git-visible content, A-Scanner restores the clean intake
+state and reports `baseline_failed`; failed restoration becomes `rollback_failed`.
 
-When post-update validation fails, A-Scanner restores tracked files to the original commit and
-removes untracked, non-ignored files created during the run. Ignored environments such as `.venv`
-and `node_modules` are not deleted.
+Native package-manager updates may change the detected dependency manifests and lockfiles and may
+change ignored package environments. A successful updater that moves `HEAD` or changes any other
+Git-visible path is rejected and rolled back. A controlled exception after update execution begins
+also enters rollback rather than leaving partial update changes behind.
+
+After dependency updates, a validation command that changes `HEAD`, changes Git-visible content,
+or cannot be verified is rejected and the original intake state is restored. Failed rollback
+verification is reported as `rollback_failed`.
 
 `--check` stores reports outside the target repository. An explicit `--report-directory` must also
 resolve outside the repository; an in-repository destination is rejected and the preflight failure
@@ -135,8 +141,8 @@ argv = ["uv", "run", "pytest"]
 cwd = "."
 ```
 
-Configured warning patterns must be valid regular expressions. Invalid configuration is rejected
-during preflight with deterministic error evidence.
+`schema_version` must be the integer `1`. Configured warning patterns must be valid regular
+expressions. Invalid configuration is rejected during preflight with deterministic error evidence.
 
 See [docs/V1-CONTRACT.md](docs/V1-CONTRACT.md) and
 [docs/SAFETY-MODEL.md](docs/SAFETY-MODEL.md).
@@ -144,5 +150,6 @@ See [docs/V1-CONTRACT.md](docs/V1-CONTRACT.md) and
 ## Status
 
 This repository is the V0.1 implementation baseline for the A-Scanner V1 build. The deterministic
-core now includes project-discovery exclusions and validation/Git-integrity hardening. Remaining
-V1 work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
+core now includes project-discovery exclusions and Git-integrity hardening around baseline
+validation, package updates, and post-update validation. Remaining V1 work is tracked in
+[docs/ROADMAP.md](docs/ROADMAP.md).

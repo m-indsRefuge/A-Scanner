@@ -32,7 +32,8 @@ PREFLIGHT
   -> BASELINE_GIT_FINGERPRINT
   -> BASELINE_VALIDATION
   -> BASELINE_INTEGRITY_CHECK
-  -> APPLY (only in --apply)
+  -> RESTORE or APPLY
+  -> PACKAGE_UPDATE_INTEGRITY_CHECK
   -> INVENTORY_AFTER
   -> POST_UPDATE_GIT_FINGERPRINT
   -> POST_VALIDATION
@@ -80,9 +81,24 @@ contents of non-ignored untracked files. This detects a validation command that 
 modified dependency file as well as new unrelated changes. Ignored environments are intentionally
 outside this fingerprint because they are also outside Git rollback guarantees.
 
-Baseline integrity failure stops before dependency updates. Post-update validation or integrity
-failure enters the rollback path. A Git inspection failure is treated as an error rather than as an
-empty change set.
+A baseline integrity violation is detected before dependency updates and restores the repository to
+the clean intake `HEAD`; verified restoration remains a baseline failure and failed restoration is
+a rollback failure. Post-update validation or integrity failure enters the rollback path. A Git
+inspection failure is treated as an error rather than as an empty change set.
+
+## Package-update integrity
+
+Native package managers are permitted to change only the detected project's dependency manifest
+and lockfile in Git-visible state. Their ignored environments may change outside this boundary.
+
+After native update commands finish, the engine re-inspects Git. `HEAD` must still equal the intake
+`HEAD`, and every Git-visible changed path must be one of the detected uv/npm manifest or lockfile
+paths. An unexpected path, a moved `HEAD`, a failed Git inspection, a failed updater command, or a
+controlled exception after update execution starts enters rollback to the intake state.
+
+This boundary prevents lifecycle/build side effects from being mistaken for dependency-update
+changes while preserving the package manager's responsibility for compatible manifest/lockfile
+resolution.
 
 ## Report persistence boundary
 

@@ -43,7 +43,7 @@ dev = [
 packages = ["src/a_scanner"]
 
 [tool.pytest.ini_options]
-addopts = "-q --basetemp=.pytest-tmp"
+addopts = "-q --basetemp=.pytest-tmp -p no:cacheprovider"
 testpaths = ["tests"]
 
 [tool.ruff]
@@ -57,4 +57,4 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
-line-ending = "lf"
+line-ending = "auto"

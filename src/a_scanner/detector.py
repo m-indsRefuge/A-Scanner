@@ -8,13 +8,13 @@ from a_scanner.models import DetectedProject, Ecosystem
 
 def discover_projects(repository: Path, excludes: tuple[str, ...]) -> list[DetectedProject]:
     detected: list[DetectedProject] = []
-    excluded = set(excludes)
+    normalized_excludes = {os.path.normcase(value) for value in excludes}
 
     for current, directories, filenames in os.walk(repository):
         directories[:] = sorted(
             directory
             for directory in directories
-            if directory not in excluded and not directory.startswith(".a-scanner")
+            if os.path.normcase(directory) not in normalized_excludes
         )
         current_path = Path(current)
         names = set(filenames)

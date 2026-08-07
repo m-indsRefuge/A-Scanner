@@ -126,3 +126,108 @@ def test_rejects_invalid_exclusion_configuration(
 
     with pytest.raises(ConfigError, match=r"\[scan\]\.exclude"):
         load_config(tmp_path, None)
+
+
+@pytest.mark.parametrize("section", ["scan", "warning", "validation"])
+def test_rejects_non_table_configuration_sections(tmp_path: Path, section: str) -> None:
+    path = tmp_path / "a-scanner.toml"
+    path.write_text(f'schema_version = 1\n{section} = "invalid"\n', encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=rf"\[{section}\] must be a table"):
+        load_config(tmp_path, None)
+
+
+@pytest.mark.parametrize(
+    "patterns_toml",
+    [
+        'patterns = "deprecated"',
+        'patterns = [""]',
+        'patterns = ["   "]',
+        "patterns = [42]",
+    ],
+)
+def test_rejects_invalid_warning_pattern_configuration(
+    tmp_path: Path,
+    patterns_toml: str,
+) -> None:
+    path = tmp_path / "a-scanner.toml"
+    path.write_text(
+        f"schema_version = 1\n[warning]\n{patterns_toml}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match=r"\[warning\]\.patterns"):
+        load_config(tmp_path, None)
+
+
+def test_rejects_invalid_warning_regular_expression(tmp_path: Path) -> None:
+    path = tmp_path / "a-scanner.toml"
+    path.write_text(
+        'schema_version = 1\n[warning]\npatterns = ["["]\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="invalid regular expression"):
+        load_config(tmp_path, None)
+
+
+def test_rejects_non_array_validation_commands(tmp_path: Path) -> None:
+    path = tmp_path / "a-scanner.toml"
+    path.write_text(
+        'schema_version = 1\nvalidation = { commands = "invalid" }\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match=r"\[validation\]\.commands must be an array"):
+        load_config(tmp_path, None)
+
+
+def test_rejects_non_table_validation_command_entry(tmp_path: Path) -> None:
+    path = tmp_path / "a-scanner.toml"
+    path.write_text(
+        'schema_version = 1\nvalidation = { commands = ["invalid"] }\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="entry 1 must be a table"):
+        load_config(tmp_path, None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("name", '["invalid"]'),
+        ("cwd", '["invalid"]'),
+    ],
+)
+def test_rejects_invalid_validation_command_metadata(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    path = tmp_path / "a-scanner.toml"
+    path.write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                "[[validation.commands]]",
+                'argv = ["uv"]',
+                f"{field} = {value}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match=rf"validation\.commands entry 1 {field}"):
+        load_config(tmp_path, None)
+
+
+def test_rejects_empty_validation_argv_element(tmp_path: Path) -> None:
+    path = tmp_path / "a-scanner.toml"
+    path.write_text(
+        'schema_version = 1\n[[validation.commands]]\nargv = ["uv", ""]\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="non-empty argv array"):
+        load_config(tmp_path, None)

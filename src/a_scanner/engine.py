@@ -15,6 +15,7 @@ from a_scanner.config import (
 from a_scanner.detector import discover_projects
 from a_scanner.git_guard import (
     GitGuardError,
+    GitState,
     changed_files,
     fingerprint_worktree,
     inspect_git,
@@ -46,6 +47,8 @@ def execute(options: ScanOptions) -> ScanReport:
     started = datetime.now(UTC)
     run_id = started.strftime("%Y%m%dT%H%M%S.%fZ")
     repository = options.repository.expanduser().resolve()
+    git_state: GitState | None = None
+    update_started = False
 
     report = ScanReport(
         schema_version=1,
@@ -167,8 +170,10 @@ def execute(options: ScanOptions) -> ScanReport:
                 )
             return _finish(report, repository, options.report_directory)
 
+        allowed_update_files = _allowed_update_files(repository, projects)
         update_commands = []
         for project in projects:
+            update_started = True
             results = adapters[project.ecosystem].apply_compatible_update(project)
             update_commands.extend((project, result) for result in results)
             if any(not result.succeeded for result in results):
@@ -183,14 +188,30 @@ def execute(options: ScanOptions) -> ScanReport:
                         source="update",
                     )
                 )
-                verified = rollback(repository, git_state.head, runner)
-                report.rollback_verified = verified
-                report.status = (
-                    Status.UPDATE_FAILED_ROLLED_BACK.value
-                    if verified
-                    else Status.ROLLBACK_FAILED.value
+                return _rollback_after_update_failure(
+                    report,
+                    repository,
+                    git_state.head,
+                    runner,
+                    options.report_directory,
                 )
-                return _finish(report, repository, options.report_directory)
+
+        update_integrity, update_integrity_event = _package_update_integrity(
+            repository,
+            runner,
+            expected_head=git_state.head,
+            allowed_files=allowed_update_files,
+        )
+        if update_integrity_event:
+            report.events.append(update_integrity_event)
+        if not update_integrity:
+            return _rollback_after_update_failure(
+                report,
+                repository,
+                git_state.head,
+                runner,
+                options.report_directory,
+            )
 
         report.projects_after = [
             adapters[project.ecosystem].snapshot(project) for project in projects
@@ -253,12 +274,57 @@ def execute(options: ScanOptions) -> ScanReport:
 
     except (GitGuardError, OSError, ValueError) as exc:
         report.events.append(f"{type(exc).__name__}: {exc}")
+        if update_started and git_state is not None:
+            return _rollback_after_update_failure(
+                report,
+                repository,
+                git_state.head,
+                runner,
+                options.report_directory,
+            )
         return _finish(report, repository, options.report_directory)
 
 
 def _report_directory_is_inside_repository(repository: Path, directory: Path) -> bool:
     resolved = directory.expanduser().resolve()
     return resolved == repository or repository in resolved.parents
+
+
+def _allowed_update_files(
+    repository: Path,
+    projects: list[DetectedProject],
+) -> set[str]:
+    allowed: set[str] = set()
+    for project in projects:
+        allowed.add(project.manifest.relative_to(repository).as_posix())
+        allowed.add(project.lockfile.relative_to(repository).as_posix())
+    return allowed
+
+
+def _package_update_integrity(
+    repository: Path,
+    runner: CommandRunner,
+    *,
+    expected_head: str,
+    allowed_files: set[str],
+) -> tuple[bool, str | None]:
+    try:
+        state = inspect_git(repository, runner)
+        if state.head != expected_head:
+            return False, "Package update changed Git HEAD unexpectedly."
+        changed = changed_files(repository, runner)
+    except GitGuardError as exc:
+        return False, f"Package update Git integrity inspection failed: {exc}"
+
+    unexpected = sorted(
+        path for path in changed if path.replace("\\", "/") not in allowed_files
+    )
+    if unexpected:
+        return (
+            False,
+            "Package update changed unexpected Git-visible files: " + ", ".join(unexpected),
+        )
+    return True, None
 
 
 def _validation_integrity(
@@ -280,6 +346,22 @@ def _validation_integrity(
     if fingerprint != expected_fingerprint:
         return False, f"{phase} validation changed Git-visible repository content."
     return True, None
+
+
+def _rollback_after_update_failure(
+    report: ScanReport,
+    repository: Path,
+    expected_head: str,
+    runner: CommandRunner,
+    report_directory: Path | None,
+) -> ScanReport:
+    verified = rollback(repository, expected_head, runner)
+    report.rollback_verified = verified
+    report.status = (
+        Status.UPDATE_FAILED_ROLLED_BACK.value if verified else Status.ROLLBACK_FAILED.value
+    )
+    report.events.append("Package update failed integrity checks; rollback was attempted.")
+    return _finish(report, repository, report_directory)
 
 
 def _rollback_after_validation_failure(

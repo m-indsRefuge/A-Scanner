@@ -72,6 +72,17 @@ def _external_reports(repository: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     return reports
 
 
+def _success_result(project) -> CommandResult:
+    return CommandResult(
+        argv=["fake-uv-update"],
+        cwd=str(project.path),
+        exit_code=0,
+        stdout="",
+        stderr="",
+        duration_seconds=0.0,
+    )
+
+
 def _install_fake_uv_adapter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     state = {"updates": 0}
 
@@ -93,19 +104,50 @@ def _install_fake_uv_adapter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
                 project.manifest.read_text(encoding="utf-8") + "# package update\n",
                 encoding="utf-8",
             )
-            return [
-                CommandResult(
-                    argv=["fake-uv-update"],
-                    cwd=str(project.path),
-                    exit_code=0,
-                    stdout="",
-                    stderr="",
-                    duration_seconds=0.0,
-                )
-            ]
+            return [_success_result(project)]
 
     monkeypatch.setattr(engine, "UvAdapter", FakeUvAdapter)
     return state
+
+
+def _install_update_side_effect_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    unrelated_change: bool = False,
+    head_change: bool = False,
+    fail_second_snapshot: bool = False,
+) -> None:
+    class SideEffectUvAdapter:
+        def __init__(self, runner: CommandRunner) -> None:
+            self.runner = runner
+            self.snapshots = 0
+
+        def snapshot(self, project) -> ProjectRecord:
+            self.snapshots += 1
+            if fail_second_snapshot and self.snapshots == 2:
+                raise OSError("post-update inventory failed")
+            return ProjectRecord(
+                ecosystem="uv",
+                path=str(project.path),
+                manifest=str(project.manifest),
+                lockfile=str(project.lockfile),
+            )
+
+        def apply_compatible_update(self, project) -> list[CommandResult]:
+            project.manifest.write_text(
+                project.manifest.read_text(encoding="utf-8") + "# package update\n",
+                encoding="utf-8",
+            )
+            if unrelated_change:
+                (project.path / "tracked.txt").write_text(
+                    "unexpected update side effect\n",
+                    encoding="utf-8",
+                )
+            if head_change:
+                _git(project.path, "commit", "--allow-empty", "-m", "updater-head-change")
+            return [_success_result(project)]
+
+    monkeypatch.setattr(engine, "UvAdapter", SideEffectUvAdapter)
 
 
 def test_check_rejects_report_directory_equal_to_repository(
@@ -220,6 +262,71 @@ def test_baseline_validation_head_change_blocks_updates(
     assert report.status == Status.BASELINE_FAILED.value
     assert state["updates"] == 0
     assert any("head" in event.lower() for event in report.events)
+
+
+def test_package_update_unrelated_change_triggers_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(
+        tmp_path,
+        project=True,
+        validation_argv=[sys.executable, "-c", "pass"],
+    )
+    _external_reports(repository, monkeypatch)
+    _install_update_side_effect_adapter(monkeypatch, unrelated_change=True)
+    initial_head = inspect_git(repository, CommandRunner()).head
+
+    report = execute(ScanOptions(repository=repository, mode=Mode.APPLY))
+
+    assert report.status == Status.UPDATE_FAILED_ROLLED_BACK.value
+    assert report.rollback_verified is True
+    assert inspect_git(repository, CommandRunner()).head == initial_head
+    assert inspect_git(repository, CommandRunner()).clean
+    assert any("unexpected" in event.lower() and "update" in event.lower() for event in report.events)
+
+
+def test_package_update_head_change_triggers_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(
+        tmp_path,
+        project=True,
+        validation_argv=[sys.executable, "-c", "pass"],
+    )
+    _external_reports(repository, monkeypatch)
+    _install_update_side_effect_adapter(monkeypatch, head_change=True)
+    initial_head = inspect_git(repository, CommandRunner()).head
+
+    report = execute(ScanOptions(repository=repository, mode=Mode.APPLY))
+
+    assert report.status == Status.UPDATE_FAILED_ROLLED_BACK.value
+    assert report.rollback_verified is True
+    assert inspect_git(repository, CommandRunner()).head == initial_head
+    assert any("head" in event.lower() and "update" in event.lower() for event in report.events)
+
+
+def test_exception_after_update_started_triggers_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(
+        tmp_path,
+        project=True,
+        validation_argv=[sys.executable, "-c", "pass"],
+    )
+    _external_reports(repository, monkeypatch)
+    _install_update_side_effect_adapter(monkeypatch, fail_second_snapshot=True)
+    initial_head = inspect_git(repository, CommandRunner()).head
+
+    report = execute(ScanOptions(repository=repository, mode=Mode.APPLY))
+
+    assert report.status == Status.UPDATE_FAILED_ROLLED_BACK.value
+    assert report.rollback_verified is True
+    assert inspect_git(repository, CommandRunner()).head == initial_head
+    assert inspect_git(repository, CommandRunner()).clean
+    assert any("post-update inventory failed" in event for event in report.events)
 
 
 def _second_validation_mutates_target_command(marker: Path, target: str) -> list[str]:

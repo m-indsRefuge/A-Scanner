@@ -41,6 +41,8 @@ Those remain V1 or post-V1 roadmap work.
 
 A `--check` run must not write files below the resolved target repository root. Default reports remain external. An explicit `--report-directory` that resolves to the repository root or any descendant is rejected during preflight.
 
+When an explicit report directory is rejected, the failure report is persisted to the normal external default report directory. The rejected path is never passed to `persist_report()`.
+
 ### Apply-mode project invariant
 
 `--apply` requires at least one supported locked uv or npm project. If discovery returns none, the run fails preflight with a non-zero CLI result rather than returning `check_completed`.
@@ -49,12 +51,14 @@ A `--check` run must not write files below the resolved target repository root. 
 
 Validation commands are trusted executable commands, but their effects are not implicitly accepted as dependency-update changes.
 
-Before each validation phase, A-Scanner records the expected Git `HEAD` and status boundary. After the validation phase completes, it re-inspects Git state. The following are failures:
+Immediately before each validation phase, A-Scanner captures the expected Git `HEAD` and porcelain status. Immediately after that phase, it re-inspects Git state and compares the new `HEAD` and status with the captured boundary. The following are failures:
 
 - `HEAD` changed during validation.
-- Baseline validation dirtied a repository that was clean at intake.
-- Post-update validation changed repository files beyond the state produced by the package-update phase.
+- Baseline validation changed the clean intake status.
+- Post-update validation changed the exact repository status produced before validation began.
 - Git state cannot be inspected after validation.
+
+This exact status comparison allows legitimate package-update changes to exist before post-update validation while preventing validation commands from adding, removing, staging, or otherwise altering repository changes themselves.
 
 For baseline failures, A-Scanner does not attempt dependency updates. For post-update integrity failures, A-Scanner uses the existing rollback path and records the failure in report events.
 
@@ -100,8 +104,8 @@ PREFLIGHT
   -> BASELINE VALIDATION
   -> VERIFY BASELINE GIT INVARIANTS
   -> APPLY PACKAGE UPDATES
-  -> CAPTURE POST-UPDATE GIT STATE
   -> INVENTORY AFTER
+  -> CAPTURE PRE-POST-VALIDATION GIT STATE
   -> POST-UPDATE VALIDATION
   -> VERIFY POST-VALIDATION GIT INVARIANTS
   -> ACCEPT OR ROLLBACK
@@ -122,7 +126,9 @@ Changes are limited to:
 
 ### Reporting boundary
 
-`report.py` keeps persistence/rendering responsibilities. The repository-boundary validation belongs before persistence, preferably in engine preflight or a focused report-path resolver, so an invalid destination never reaches `persist_report()`.
+`report.py` keeps persistence/rendering responsibilities. The repository-boundary validation belongs in engine preflight after the canonical Git root is known and before project inventory begins.
+
+The engine resolves an effective report directory. A valid explicit external directory becomes the effective destination. An explicit directory equal to or nested under the repository is recorded as a preflight error and replaced with the normal external default solely for persisting that failure report. Therefore an invalid user destination never reaches `persist_report()`.
 
 The report schema stays at version `1` unless a new field becomes strictly necessary. C02 should prefer existing `events`, `status`, and validation evidence over schema expansion.
 
@@ -148,8 +154,8 @@ Create `tests/test_engine.py` with fixture repositories and a controllable fake 
 Required regression cases:
 
 1. `--apply` equivalent engine execution fails preflight when no supported locked project exists.
-2. Report directory equal to repository root is rejected.
-3. Report directory nested below repository is rejected.
+2. Report directory equal to repository root is rejected and failure evidence is written externally.
+3. Report directory nested below repository is rejected and failure evidence is written externally.
 4. External report directory remains accepted.
 5. Baseline validation command that modifies a tracked file causes baseline failure and prevents update execution.
 6. Baseline validation command that changes `HEAD` causes baseline failure.

@@ -231,3 +231,12 @@ def test_rejects_empty_validation_argv_element(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="non-empty argv array"):
         load_config(tmp_path, None)
+
+
+@pytest.mark.parametrize("schema_value", ["true", "1.0"])
+def test_rejects_non_integer_schema_version(tmp_path: Path, schema_value: str) -> None:
+    path = tmp_path / "a-scanner.toml"
+    path.write_text(f"schema_version = {schema_value}\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="schema_version"):
+        load_config(tmp_path, None)

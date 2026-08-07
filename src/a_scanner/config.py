@@ -101,9 +101,7 @@ def _warning_patterns(configured: object) -> tuple[str, ...]:
     patterns: list[str] = []
     for index, value in enumerate(values, start=1):
         if not isinstance(value, str) or not value.strip():
-            raise ConfigError(
-                f"[warning].patterns entry {index} must be a non-empty string."
-            )
+            raise ConfigError(f"[warning].patterns entry {index} must be a non-empty string.")
         try:
             re.compile(value, re.IGNORECASE)
         except re.error as exc:
@@ -134,9 +132,7 @@ def _validation_commands(configured: object) -> tuple[ValidationCommand, ...]:
             or not argv
             or not all(isinstance(value, str) and value.strip() for value in argv)
         ):
-            raise ConfigError(
-                f"validation.commands entry {index} requires a non-empty argv array."
-            )
+            raise ConfigError(f"validation.commands entry {index} requires a non-empty argv array.")
 
         name_value = item.get("name")
         if name_value is not None and not isinstance(name_value, str):

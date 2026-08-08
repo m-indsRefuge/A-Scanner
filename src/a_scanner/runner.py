@@ -26,10 +26,16 @@ class CommandRunner:
         if env:
             merged_env.update(env)
 
+        command = list(argv)
+        if command:
+            resolved = shutil.which(command[0], path=merged_env.get("PATH"))
+            if resolved is not None:
+                command[0] = resolved
+
         started = time.monotonic()
         try:
             completed = subprocess.run(
-                list(argv),
+                command,
                 cwd=cwd,
                 env=merged_env,
                 text=True,

@@ -35,3 +35,20 @@ def test_runner_executes_windows_cmd_shim(
     assert result.exit_code == 0
     assert result.stdout.strip() == "shim-executed"
     assert result.stderr == ""
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows npm integration regression")
+def test_runner_executes_real_npm_on_windows() -> None:
+    runner = CommandRunner()
+
+    resolved = runner.which("npm")
+    assert resolved is not None
+
+    result = runner.run(
+        ["npm", "--version"],
+        cwd=Path.cwd(),
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.strip()
+    assert result.stderr == ""

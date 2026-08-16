@@ -118,6 +118,19 @@ def execute(options: ScanOptions) -> ScanReport:
         report.projects_before = [
             adapters[project.ecosystem].snapshot(project) for project in projects
         ]
+
+        npm_inventory_failed = any(
+            project.ecosystem == Ecosystem.NPM.value
+            and any(
+                result.argv[:2] == ["npm", "outdated"] and result.exit_code not in {0, 1}
+                for result in project.command_results
+            )
+            for project in report.projects_before
+        )
+        if npm_inventory_failed:
+            report.events.append("npm inventory failed; see project command evidence.")
+            return _finish(report, repository, options.report_directory)
+
         report.warnings_before = _collect_warnings(
             report.projects_before,
             config,

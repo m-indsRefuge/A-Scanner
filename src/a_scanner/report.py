@@ -56,12 +56,20 @@ def render_text(report: ScanReport) -> str:
     if not report.projects_before:
         lines.append("  No supported locked projects detected.")
     for project in report.projects_before:
+        npm_inventory_failed = project.ecosystem == "npm" and any(
+            result.argv[:2] == ["npm", "outdated"] and result.exit_code not in {0, 1}
+            for result in project.command_results
+        )
+        outdated_summary = (
+            "unavailable" if npm_inventory_failed else str(len(project.outdated_dependencies))
+        )
+
         lines.extend(
             [
                 f"  [{project.ecosystem}] {project.path}",
                 f"    Direct dependencies:   {len(project.direct_dependencies)}",
                 f"    Resolved dependencies: {len(project.resolved_dependencies)}",
-                f"    Outdated dependencies: {len(project.outdated_dependencies)}",
+                f"    Outdated dependencies: {outdated_summary}",
             ]
         )
         ceilings = sum(

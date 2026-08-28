@@ -12,6 +12,7 @@ from a_scanner.models import DetectedProject, Ecosystem
 
 CANONICAL_EXCLUDES = (
     ".git",
+    ".worktrees",
     ".venv",
     "venv",
     "node_modules",

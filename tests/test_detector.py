@@ -41,6 +41,15 @@ def test_skips_excluded_directories(tmp_path: Path) -> None:
     assert discover_projects(tmp_path, ("node_modules",)) == []
 
 
+def test_default_excludes_nested_git_worktrees(tmp_path: Path) -> None:
+    ignored = tmp_path / ".worktrees" / "feature"
+    ignored.mkdir(parents=True)
+    (ignored / "package.json").write_text("{}", encoding="utf-8")
+    (ignored / "package-lock.json").write_text("{}", encoding="utf-8")
+
+    assert discover_projects(tmp_path, DEFAULT_EXCLUDES) == []
+
+
 @pytest.mark.parametrize("directory_name", TRANSIENT_DIRECTORIES)
 def test_skips_canonical_transient_directories(
     tmp_path: Path,

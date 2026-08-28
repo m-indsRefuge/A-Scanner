@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from a_scanner.adapters.npm_adapter import has_failed_npm_inventory
-from a_scanner.models import ScanReport
+from a_scanner.models import DependencyRecord, ScanReport
 
 
 def default_report_directory(repository: Path) -> Path:
@@ -57,11 +57,8 @@ def render_text(report: ScanReport) -> str:
     if not report.projects_before:
         lines.append("  No supported locked projects detected.")
     for project in report.projects_before:
-        outdated_summary = (
-            "unavailable"
-            if has_failed_npm_inventory(project)
-            else str(len(project.outdated_dependencies))
-        )
+        inventory_failed = has_failed_npm_inventory(project)
+        outdated_summary = "unavailable" if inventory_failed else str(len(project.outdated_dependencies))
 
         lines.extend(
             [
@@ -71,6 +68,22 @@ def render_text(report: ScanReport) -> str:
                 f"    Outdated dependencies: {outdated_summary}",
             ]
         )
+
+        if inventory_failed:
+            lines.append("    Dependency inventory unavailable; see command evidence in the full report.")
+            continue
+
+        direct_updates = [dependency for dependency in project.outdated_dependencies if dependency.direct]
+        transitive_count = len(project.outdated_dependencies) - len(direct_updates)
+        if direct_updates or transitive_count:
+            lines.append("    AVAILABLE UPDATES")
+            lines.extend(f"      {_render_dependency_update(item)}" for item in direct_updates)
+            if transitive_count:
+                noun = "update" if transitive_count == 1 else "updates"
+                lines.append(
+                    f"      {transitive_count} transitive dependency {noun} available."
+                )
+
         ceilings = sum(
             1 for dependency in project.outdated_dependencies if dependency.compatibility_ceiling
         )
@@ -105,6 +118,9 @@ def render_text(report: ScanReport) -> str:
     lines.extend(
         [
             "",
+            "RESULT",
+            f"  {_result_message(report)}",
+            "",
             f"Rollback verified: {report.rollback_verified}",
             f"JSON report: {report.report_json_path or 'pending'}",
             f"Text report: {report.report_text_path or 'pending'}",
@@ -112,3 +128,39 @@ def render_text(report: ScanReport) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _render_dependency_update(dependency: DependencyRecord) -> str:
+    current = dependency.current or "unknown"
+    target = dependency.wanted or dependency.latest or "unknown"
+
+    if dependency.compatibility_ceiling and dependency.latest and dependency.latest != target:
+        if target == current:
+            return (
+                f"{dependency.name} {current} "
+                f"(latest {dependency.latest}; compatibility ceiling)"
+            )
+        return (
+            f"{dependency.name} {current} -> {target} "
+            f"(latest {dependency.latest}; compatibility ceiling)"
+        )
+
+    if target == current:
+        return f"{dependency.name} {current}"
+    return f"{dependency.name} {current} -> {target}"
+
+
+def _result_message(report: ScanReport) -> str:
+    messages = {
+        "check_completed": "Check completed. Repository was not modified.",
+        "updated": "Compatible dependency updates were applied and validated.",
+        "no_changes": "No compatible dependency changes were required.",
+        "preflight_failed": "Scan stopped during preflight; inspect the events above.",
+        "baseline_failed": "Baseline validation failed; intake state restoration was attempted.",
+        "update_failed_rolled_back": "Dependency update failed; original repository state was restored.",
+        "validation_failed_rolled_back": (
+            "Post-update validation failed; original repository state was restored."
+        ),
+        "rollback_failed": "Rollback could not be verified; inspect the full report before continuing.",
+    }
+    return messages.get(report.status, f"Run finished with status: {report.status}.")

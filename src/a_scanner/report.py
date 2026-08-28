@@ -72,9 +72,11 @@ def render_text(report: ScanReport) -> str:
         )
 
         if inventory_failed:
-            lines.append(
-                "    Dependency inventory unavailable; "
-                "see command evidence in the full report."
+            lines.extend(
+                [
+                    "    Dependency inventory unavailable.",
+                    "    See command evidence in the full report.",
+                ]
             )
             continue
 
@@ -87,9 +89,8 @@ def render_text(report: ScanReport) -> str:
             lines.extend(f"      {_render_dependency_update(item)}" for item in direct_updates)
             if transitive_count:
                 noun = "update" if transitive_count == 1 else "updates"
-                lines.append(
-                    f"      {transitive_count} transitive dependency {noun} available."
-                )
+                summary = f"{transitive_count} transitive dependency {noun} available."
+                lines.append(f"      {summary}")
 
         ceilings = sum(
             1 for dependency in project.outdated_dependencies if dependency.compatibility_ceiling
@@ -142,15 +143,10 @@ def _render_dependency_update(dependency: DependencyRecord) -> str:
     target = dependency.wanted or dependency.latest or "unknown"
 
     if dependency.compatibility_ceiling and dependency.latest and dependency.latest != target:
+        ceiling = f"latest {dependency.latest}; compatibility ceiling"
         if target == current:
-            return (
-                f"{dependency.name} {current} "
-                f"(latest {dependency.latest}; compatibility ceiling)"
-            )
-        return (
-            f"{dependency.name} {current} -> {target} "
-            f"(latest {dependency.latest}; compatibility ceiling)"
-        )
+            return f"{dependency.name} {current} ({ceiling})"
+        return f"{dependency.name} {current} -> {target} ({ceiling})"
 
     if target == current:
         return f"{dependency.name} {current}"

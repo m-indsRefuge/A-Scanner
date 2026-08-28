@@ -136,11 +136,7 @@ class NpmAdapter(PackageAdapter):
         if result.exit_code == 1 and not data:
             return False
 
-        return all(
-            isinstance(details, dict)
-            and any(key in details for key in ("current", "wanted", "latest"))
-            for details in data.values()
-        )
+        return all(_outdated_entries(details) is not None for details in data.values())
 
     def _parse_outdated(
         self,
@@ -159,27 +155,60 @@ class NpmAdapter(PackageAdapter):
         direct_names = {item.name for item in direct}
         records: list[DependencyRecord] = []
         for name, details in data.items():
-            if not isinstance(details, dict):
+            entries = _outdated_entries(details)
+            if entries is None:
                 continue
-            current = details.get("current")
-            wanted = details.get("wanted")
-            latest = details.get("latest")
+
+            current = _common_value(entries, "current")
+            wanted = _common_value(entries, "wanted")
+            latest = _common_value(entries, "latest")
+            metadata_entries = [
+                {
+                    key: value
+                    for key, value in entry.items()
+                    if key not in {"current", "wanted", "latest"}
+                }
+                for entry in entries
+            ]
+            metadata = metadata_entries[0] if len(entries) == 1 else {"entries": metadata_entries}
+
             records.append(
                 DependencyRecord(
                     name=name,
-                    current=str(current) if current is not None else None,
-                    wanted=str(wanted) if wanted is not None else None,
-                    latest=str(latest) if latest is not None else None,
+                    current=current,
+                    wanted=wanted,
+                    latest=latest,
                     direct=name in direct_names,
-                    compatibility_ceiling=bool(wanted and latest and wanted != latest),
-                    metadata={
-                        key: value
-                        for key, value in details.items()
-                        if key not in {"current", "wanted", "latest"}
-                    },
+                    compatibility_ceiling=any(
+                        entry.get("wanted")
+                        and entry.get("latest")
+                        and entry["wanted"] != entry["latest"]
+                        for entry in entries
+                    ),
+                    metadata=metadata,
                 )
             )
         return sorted(records, key=lambda item: item.name.casefold())
+
+
+def _outdated_entries(details: Any) -> list[dict[str, Any]] | None:
+    if isinstance(details, dict):
+        entries = [details]
+    elif isinstance(details, list) and details and all(isinstance(item, dict) for item in details):
+        entries = details
+    else:
+        return None
+
+    if not all(any(key in entry for key in ("current", "wanted", "latest")) for entry in entries):
+        return None
+    return entries
+
+
+def _common_value(entries: list[dict[str, Any]], key: str) -> str | None:
+    values = {str(entry[key]) for entry in entries if entry.get(key) is not None}
+    if len(values) == 1:
+        return values.pop()
+    return None
 
 
 def _name_from_location(location: str) -> str:

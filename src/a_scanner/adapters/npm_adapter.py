@@ -7,6 +7,12 @@ from typing import Any
 from a_scanner.adapters.base import PackageAdapter
 from a_scanner.models import CommandResult, DependencyRecord, DetectedProject, ProjectRecord
 
+NPM_INVENTORY_FAILURE_NOTE = "npm outdated inspection failed; see command evidence."
+
+
+def has_failed_npm_inventory(project: ProjectRecord) -> bool:
+    return project.ecosystem == "npm" and NPM_INVENTORY_FAILURE_NOTE in project.notes
+
 
 class NpmAdapter(PackageAdapter):
     executable = "npm"
@@ -20,11 +26,12 @@ class NpmAdapter(PackageAdapter):
             ["npm", "outdated", "--all", "--json"],
             cwd=project.path,
         )
-        outdated = self._parse_outdated(outdated_result.stdout, direct)
+        inventory_valid = self._outdated_result_is_valid(outdated_result)
+        outdated = self._parse_outdated(outdated_result.stdout, direct) if inventory_valid else []
 
         notes: list[str] = []
-        if outdated_result.exit_code not in {0, 1}:
-            notes.append("npm outdated inspection failed; see command evidence.")
+        if not inventory_valid:
+            notes.append(NPM_INVENTORY_FAILURE_NOTE)
 
         return ProjectRecord(
             ecosystem="npm",
@@ -110,6 +117,30 @@ class NpmAdapter(PackageAdapter):
                     )
                 )
         return records
+
+    def _outdated_result_is_valid(self, result: CommandResult) -> bool:
+        if result.exit_code not in {0, 1}:
+            return False
+
+        raw = result.stdout.strip()
+        if not raw:
+            return result.exit_code == 0
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return False
+
+        if not isinstance(data, dict) or "error" in data:
+            return False
+        if result.exit_code == 1 and not data:
+            return False
+
+        return all(
+            isinstance(details, dict)
+            and any(key in details for key in ("current", "wanted", "latest"))
+            for details in data.values()
+        )
 
     def _parse_outdated(
         self,

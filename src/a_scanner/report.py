@@ -5,6 +5,7 @@ import os
 import re
 from pathlib import Path
 
+from a_scanner.adapters.npm_adapter import has_failed_npm_inventory
 from a_scanner.models import ScanReport
 
 
@@ -56,12 +57,10 @@ def render_text(report: ScanReport) -> str:
     if not report.projects_before:
         lines.append("  No supported locked projects detected.")
     for project in report.projects_before:
-        npm_inventory_failed = project.ecosystem == "npm" and any(
-            result.argv[:2] == ["npm", "outdated"] and result.exit_code not in {0, 1}
-            for result in project.command_results
-        )
         outdated_summary = (
-            "unavailable" if npm_inventory_failed else str(len(project.outdated_dependencies))
+            "unavailable"
+            if has_failed_npm_inventory(project)
+            else str(len(project.outdated_dependencies))
         )
 
         lines.extend(

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from a_scanner import __version__
 from a_scanner.adapters import NpmAdapter, UvAdapter
+from a_scanner.adapters.npm_adapter import has_failed_npm_inventory
 from a_scanner.config import (
     ScannerConfig,
     ValidationCommand,
@@ -118,6 +119,11 @@ def execute(options: ScanOptions) -> ScanReport:
         report.projects_before = [
             adapters[project.ecosystem].snapshot(project) for project in projects
         ]
+
+        if any(has_failed_npm_inventory(project) for project in report.projects_before):
+            report.events.append("npm inventory failed; see project command evidence.")
+            return _finish(report, repository, options.report_directory)
+
         report.warnings_before = _collect_warnings(
             report.projects_before,
             config,
@@ -223,6 +229,16 @@ def execute(options: ScanOptions) -> ScanReport:
         report.projects_after = [
             adapters[project.ecosystem].snapshot(project) for project in projects
         ]
+        if any(has_failed_npm_inventory(project) for project in report.projects_after):
+            report.events.append("Post-update npm inventory failed; rollback required.")
+            return _rollback_after_update_failure(
+                report,
+                repository,
+                git_state.head,
+                runner,
+                options.report_directory,
+            )
+
         report.warnings_after = _collect_warnings(
             report.projects_after,
             config,

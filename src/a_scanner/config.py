@@ -12,6 +12,7 @@ from a_scanner.models import DetectedProject, Ecosystem
 
 DEFAULT_EXCLUDES = (
     ".git",
+    ".worktrees",
     ".venv",
     "venv",
     "node_modules",

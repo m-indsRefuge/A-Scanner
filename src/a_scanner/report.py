@@ -58,7 +58,9 @@ def render_text(report: ScanReport) -> str:
         lines.append("  No supported locked projects detected.")
     for project in report.projects_before:
         inventory_failed = has_failed_npm_inventory(project)
-        outdated_summary = "unavailable" if inventory_failed else str(len(project.outdated_dependencies))
+        outdated_summary = (
+            "unavailable" if inventory_failed else str(len(project.outdated_dependencies))
+        )
 
         lines.extend(
             [
@@ -70,10 +72,15 @@ def render_text(report: ScanReport) -> str:
         )
 
         if inventory_failed:
-            lines.append("    Dependency inventory unavailable; see command evidence in the full report.")
+            lines.append(
+                "    Dependency inventory unavailable; "
+                "see command evidence in the full report."
+            )
             continue
 
-        direct_updates = [dependency for dependency in project.outdated_dependencies if dependency.direct]
+        direct_updates = [
+            dependency for dependency in project.outdated_dependencies if dependency.direct
+        ]
         transitive_count = len(project.outdated_dependencies) - len(direct_updates)
         if direct_updates or transitive_count:
             lines.append("    AVAILABLE UPDATES")
@@ -157,10 +164,14 @@ def _result_message(report: ScanReport) -> str:
         "no_changes": "No compatible dependency changes were required.",
         "preflight_failed": "Scan stopped during preflight; inspect the events above.",
         "baseline_failed": "Baseline validation failed; intake state restoration was attempted.",
-        "update_failed_rolled_back": "Dependency update failed; original repository state was restored.",
+        "update_failed_rolled_back": (
+            "Dependency update failed; original repository state was restored."
+        ),
         "validation_failed_rolled_back": (
             "Post-update validation failed; original repository state was restored."
         ),
-        "rollback_failed": "Rollback could not be verified; inspect the full report before continuing.",
+        "rollback_failed": (
+            "Rollback could not be verified; inspect the full report before continuing."
+        ),
     }
     return messages.get(report.status, f"Run finished with status: {report.status}.")

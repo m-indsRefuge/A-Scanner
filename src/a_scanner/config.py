@@ -39,9 +39,7 @@ DEFAULT_WARNING_PATTERNS = (
 )
 
 MAX_WARNING_PATTERN_LENGTH = 256
-_NESTED_REPEAT_PATTERN = re.compile(
-    r"\([^()]*[+*][^()]*\)\s*(?:[+*]|\{\d+(?:,\d*)?\})"
-)
+_NESTED_REPEAT_PATTERN = re.compile(r"\([^()]*[+*][^()]*\)\s*(?:[+*]|\{\d+(?:,\d*)?\})")
 
 
 class ConfigError(ValueError):

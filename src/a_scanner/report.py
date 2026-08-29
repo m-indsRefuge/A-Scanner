@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 
 from a_scanner.adapters.npm_adapter import has_failed_npm_inventory
+from a_scanner.adapters.uv_adapter import has_unavailable_uv_inventory
 from a_scanner.models import DependencyRecord, ScanReport
 
 
@@ -30,13 +32,45 @@ def persist_report(report: ScanReport, directory: Path) -> tuple[Path, Path]:
     report.report_json_path = str(json_path)
     report.report_text_path = str(text_path)
 
-    json_path.write_text(
+    _atomic_write_text(
+        json_path,
         json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
     )
-    text_path.write_text(render_text(report), encoding="utf-8", newline="\n")
+    _atomic_write_text(text_path, render_text(report))
     return json_path, text_path
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+        text=True,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _restrict_permissions(temporary)
+        os.replace(temporary, path)
+        _restrict_permissions(path)
+    except Exception:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _restrict_permissions(path: Path) -> None:
+    try:
+        path.chmod(0o600)
+    except OSError:
+        # Windows ACLs do not map cleanly to POSIX chmod. Atomic creation still
+        # prevents a partially-written report from becoming authoritative.
+        pass
 
 
 def render_text(report: ScanReport) -> str:
@@ -57,7 +91,9 @@ def render_text(report: ScanReport) -> str:
     if not report.projects_before:
         lines.append("  No supported locked projects detected.")
     for project in report.projects_before:
-        inventory_failed = has_failed_npm_inventory(project)
+        inventory_failed = has_failed_npm_inventory(project) or has_unavailable_uv_inventory(
+            project
+        )
         outdated_summary = (
             "unavailable" if inventory_failed else str(len(project.outdated_dependencies))
         )

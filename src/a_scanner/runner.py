@@ -22,15 +22,15 @@ class CommandRunner:
         env: Mapping[str, str] | None = None,
         timeout_seconds: int = 1800,
     ) -> CommandResult:
+        command = list(argv)
+        if command:
+            resolved = shutil.which(command[0], path=os.environ.get("PATH"))
+            if resolved is not None:
+                command[0] = resolved
+
         merged_env = os.environ.copy()
         if env:
             merged_env.update(env)
-
-        command = list(argv)
-        if command:
-            resolved = shutil.which(command[0], path=merged_env.get("PATH"))
-            if resolved is not None:
-                command[0] = resolved
 
         started = time.monotonic()
         try:

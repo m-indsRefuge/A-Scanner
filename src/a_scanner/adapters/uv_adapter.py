@@ -9,6 +9,13 @@ from a_scanner.adapters.base import PackageAdapter
 from a_scanner.models import CommandResult, DependencyRecord, DetectedProject, ProjectRecord
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
+UV_INVENTORY_UNAVAILABLE_NOTE = (
+    "uv outdated dependency inventory unavailable; raw command evidence is preserved."
+)
+
+
+def has_unavailable_uv_inventory(project: ProjectRecord) -> bool:
+    return project.ecosystem == "uv" and UV_INVENTORY_UNAVAILABLE_NOTE in project.notes
 
 
 class UvAdapter(PackageAdapter):
@@ -27,19 +34,22 @@ class UvAdapter(PackageAdapter):
 
         outdated: list[DependencyRecord] = []
         notes: list[str] = []
+        json_inventory_valid = False
         if json_result.succeeded:
-            outdated = self._parse_outdated_json(json_result.stdout, direct)
-        else:
+            try:
+                outdated = self._parse_outdated_json(json_result.stdout, direct)
+                json_inventory_valid = True
+            except ValueError:
+                json_inventory_valid = False
+
+        if not json_inventory_valid:
             text_result = self.runner.run(
                 ["uv", "tree", "--outdated", "--frozen"],
                 cwd=project.path,
             )
             command_results.append(text_result)
-            if text_result.succeeded:
-                notes.append(
-                    "uv JSON tree output was unavailable; raw outdated output is preserved."
-                )
-            else:
+            notes.append(UV_INVENTORY_UNAVAILABLE_NOTE)
+            if not text_result.succeeded:
                 notes.append("uv outdated inspection failed; see command evidence.")
 
         return ProjectRecord(
@@ -126,19 +136,23 @@ class UvAdapter(PackageAdapter):
     ) -> list[DependencyRecord]:
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError:
-            return []
+        except json.JSONDecodeError as exc:
+            raise ValueError("uv outdated JSON could not be decoded") from exc
 
         direct_names = {item.name.casefold() for item in direct}
         records: dict[tuple[str, str | None, str | None], DependencyRecord] = {}
+        saw_package_node = False
 
         def visit(node: Any) -> None:
+            nonlocal saw_package_node
             if isinstance(node, dict):
                 name = node.get("name")
                 current = node.get("version") or node.get("current")
                 latest = (
                     node.get("latest") or node.get("latest_version") or node.get("latest-version")
                 )
+                if isinstance(name, str) and current is not None:
+                    saw_package_node = True
                 if isinstance(name, str) and current and latest and str(current) != str(latest):
                     key = (name, str(current), str(latest))
                     records[key] = DependencyRecord(
@@ -156,4 +170,6 @@ class UvAdapter(PackageAdapter):
                     visit(item)
 
         visit(data)
+        if not saw_package_node:
+            raise ValueError("uv outdated JSON did not contain a recognized package tree")
         return sorted(records.values(), key=lambda item: item.name.casefold())

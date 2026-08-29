@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 from a_scanner.models import WarningRecord
+
+
+@lru_cache(maxsize=64)
+def _compile_patterns(patterns: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
+    return tuple(re.compile(pattern, re.IGNORECASE) for pattern in patterns)
 
 
 def parse_warnings(
@@ -12,7 +18,7 @@ def parse_warnings(
     source: str,
     patterns: tuple[str, ...],
 ) -> list[WarningRecord]:
-    compiled = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
+    compiled = _compile_patterns(patterns)
     records: list[WarningRecord] = []
     seen: set[str] = set()
 

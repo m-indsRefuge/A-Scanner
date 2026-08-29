@@ -83,7 +83,10 @@ def execute(options: ScanOptions) -> ScanReport:
             repository,
             options.report_directory,
         ):
-            report.events.append("Report directory must be outside the target repository.")
+            report.events.append(
+                "Requested report directory is inside the target repository and was rejected; "
+                "the failure report will be written to the default external report directory."
+            )
             return _finish(report, repository, None)
 
         config = load_config(repository, options.config_path)
@@ -113,7 +116,10 @@ def execute(options: ScanOptions) -> ScanReport:
 
         adapters = {
             Ecosystem.UV: UvAdapter(runner),
-            Ecosystem.NPM: NpmAdapter(runner),
+            Ecosystem.NPM: NpmAdapter(
+                runner,
+                ignore_scripts=config.npm_ignore_scripts,
+            ),
         }
 
         report.projects_before = [
@@ -317,10 +323,18 @@ def _allowed_update_files(
     repository: Path,
     projects: list[DetectedProject],
 ) -> set[str]:
+    repository = repository.resolve()
     allowed: set[str] = set()
     for project in projects:
-        allowed.add(project.manifest.relative_to(repository).as_posix())
-        allowed.add(project.lockfile.relative_to(repository).as_posix())
+        for path in (project.manifest, project.lockfile):
+            resolved = path.resolve()
+            try:
+                relative = resolved.relative_to(repository)
+            except ValueError as exc:
+                raise GitGuardError(
+                    f"Detected project metadata is outside repository: {resolved}"
+                ) from exc
+            allowed.add(relative.as_posix())
     return allowed
 
 

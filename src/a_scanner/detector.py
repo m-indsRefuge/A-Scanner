@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from a_scanner.models import DetectedProject, Ecosystem
@@ -8,15 +9,19 @@ from a_scanner.models import DetectedProject, Ecosystem
 
 def discover_projects(repository: Path, excludes: tuple[str, ...]) -> list[DetectedProject]:
     detected: list[DetectedProject] = []
-    normalized_excludes = {os.path.normcase(value) for value in excludes}
+    repository = repository.resolve()
+    normalized_excludes = tuple(_normalize_exclude(value) for value in excludes)
 
     for current, directories, filenames in os.walk(repository):
-        directories[:] = sorted(
-            directory
-            for directory in directories
-            if os.path.normcase(directory) not in normalized_excludes
-        )
         current_path = Path(current)
+        kept_directories: list[str] = []
+        for directory in sorted(directories):
+            relative = (current_path / directory).relative_to(repository).as_posix()
+            if _is_excluded(directory, relative, normalized_excludes):
+                continue
+            kept_directories.append(directory)
+        directories[:] = kept_directories
+
         names = set(filenames)
 
         if {"pyproject.toml", "uv.lock"}.issubset(names):
@@ -40,3 +45,22 @@ def discover_projects(repository: Path, excludes: tuple[str, ...]) -> list[Detec
             )
 
     return sorted(detected, key=lambda item: (str(item.path), item.ecosystem.value))
+
+
+def _normalize_exclude(value: str) -> str:
+    normalized = value.replace("\\", "/").strip("/")
+    return os.path.normcase(normalized)
+
+
+def _is_excluded(
+    basename: str,
+    relative_path: str,
+    patterns: tuple[str, ...],
+) -> bool:
+    normalized_basename = os.path.normcase(basename)
+    normalized_relative = os.path.normcase(relative_path.replace("\\", "/"))
+    for pattern in patterns:
+        candidate = normalized_relative if "/" in pattern or "\\" in pattern else normalized_basename
+        if fnmatchcase(candidate, pattern):
+            return True
+    return False

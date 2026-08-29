@@ -6,6 +6,8 @@ from pathlib import Path
 
 from a_scanner.runner import CommandRunner
 
+MAX_UNTRACKED_FINGERPRINT_BYTES = 100 * 1024 * 1024
+
 
 class GitGuardError(RuntimeError):
     pass
@@ -53,16 +55,31 @@ def inspect_git(repository: Path, runner: CommandRunner) -> GitState:
 
 def changed_files(root: Path, runner: CommandRunner) -> list[str]:
     result = runner.run(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=root,
         timeout_seconds=30,
     )
     if not result.succeeded:
         raise GitGuardError("Unable to inspect Git working-tree changes.")
+
+    fields = result.stdout.split("\0")
     paths: list[str] = []
-    for line in result.stdout.splitlines():
-        if len(line) >= 4:
-            paths.append(line[3:].strip())
+    index = 0
+    while index < len(fields):
+        field = fields[index]
+        index += 1
+        if not field:
+            continue
+        if len(field) < 4:
+            raise GitGuardError("Unable to parse Git working-tree changes.")
+
+        status = field[:2]
+        paths.append(field[3:])
+        if "R" in status or "C" in status:
+            if index >= len(fields) or not fields[index]:
+                raise GitGuardError("Unable to parse Git rename/copy change.")
+            index += 1
+
     return sorted(set(paths))
 
 
@@ -105,13 +122,27 @@ def fingerprint_worktree(root: Path, runner: CommandRunner) -> str:
                     str(path.readlink()).encode("utf-8", errors="replace"),
                 )
             elif path.is_file():
+                size = path.stat().st_size
+                if size > MAX_UNTRACKED_FINGERPRINT_BYTES:
+                    raise GitGuardError(
+                        f"Untracked file is too large to fingerprint safely: {relative} "
+                        f"({size} bytes; limit {MAX_UNTRACKED_FINGERPRINT_BYTES})."
+                    )
                 digest.update(b"FILE\0")
+                bytes_read = 0
                 with path.open("rb") as handle:
                     while chunk := handle.read(1024 * 1024):
+                        bytes_read += len(chunk)
+                        if bytes_read > MAX_UNTRACKED_FINGERPRINT_BYTES:
+                            raise GitGuardError(
+                                f"Untracked file grew too large to fingerprint safely: {relative}."
+                            )
                         digest.update(chunk)
                 digest.update(b"\0")
             else:
                 _update_digest(digest, b"OTHER", b"")
+        except GitGuardError:
+            raise
         except OSError as exc:
             raise GitGuardError(f"Unable to fingerprint untracked path: {relative}") from exc
 

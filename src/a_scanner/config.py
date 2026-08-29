@@ -38,6 +38,11 @@ DEFAULT_WARNING_PATTERNS = (
     "legacy API",
 )
 
+MAX_WARNING_PATTERN_LENGTH = 256
+_NESTED_REPEAT_PATTERN = re.compile(
+    r"\([^()]*[+*][^()]*\)\s*(?:[+*]|\{\d+(?:,\d*)?\})"
+)
+
 
 class ConfigError(ValueError):
     pass
@@ -55,6 +60,7 @@ class ScannerConfig:
     excludes: tuple[str, ...] = DEFAULT_EXCLUDES
     warning_patterns: tuple[str, ...] = DEFAULT_WARNING_PATTERNS
     validation_commands: tuple[ValidationCommand, ...] = field(default_factory=tuple)
+    npm_ignore_scripts: bool = True
 
 
 def _table(data: Mapping[str, object], key: str) -> Mapping[str, object]:
@@ -103,6 +109,15 @@ def _warning_patterns(configured: object) -> tuple[str, ...]:
     for index, value in enumerate(values, start=1):
         if not isinstance(value, str) or not value.strip():
             raise ConfigError(f"[warning].patterns entry {index} must be a non-empty string.")
+        if len(value) > MAX_WARNING_PATTERN_LENGTH:
+            raise ConfigError(
+                f"[warning].patterns entry {index} pattern exceeds "
+                f"{MAX_WARNING_PATTERN_LENGTH} characters."
+            )
+        if _NESTED_REPEAT_PATTERN.search(value):
+            raise ConfigError(
+                f"[warning].patterns entry {index} pattern contains nested repetition."
+            )
         try:
             re.compile(value, re.IGNORECASE)
         except re.error as exc:
@@ -154,11 +169,27 @@ def _validation_commands(configured: object) -> tuple[ValidationCommand, ...]:
     return tuple(commands)
 
 
+def _boolean_option(
+    table: Mapping[str, object],
+    key: str,
+    *,
+    section: str,
+    default: bool,
+) -> bool:
+    value = table.get(key, default)
+    if type(value) is not bool:
+        raise ConfigError(f"[{section}].{key} must be a boolean.")
+    return value
+
+
 def load_config(repository: Path, config_path: Path | None) -> ScannerConfig:
-    path = config_path or repository / "a-scanner.toml"
+    explicit_config = config_path is not None
+    path = (config_path or repository / "a-scanner.toml").expanduser()
     if not path.is_absolute():
         path = repository / path
     if not path.exists():
+        if explicit_config:
+            raise ConfigError(f"Config file not found: {path}")
         return ScannerConfig()
 
     with path.open("rb") as handle:
@@ -171,11 +202,18 @@ def load_config(repository: Path, config_path: Path | None) -> ScannerConfig:
     scan = _table(data, "scan")
     warning = _table(data, "warning")
     validation = _table(data, "validation")
+    npm = _table(data, "npm")
 
     return ScannerConfig(
         excludes=_merge_excludes(scan.get("exclude")),
         warning_patterns=_warning_patterns(warning.get("patterns")),
         validation_commands=_validation_commands(validation.get("commands")),
+        npm_ignore_scripts=_boolean_option(
+            npm,
+            "ignore_scripts",
+            section="npm",
+            default=True,
+        ),
     )
 
 
@@ -191,14 +229,15 @@ def discover_validation_commands(
         cwd = "." if str(relative) == "." else relative.as_posix()
 
         if project.ecosystem is Ecosystem.UV:
-            pyproject_text = project.manifest.read_text(encoding="utf-8", errors="replace")
+            with project.manifest.open("rb") as handle:
+                pyproject_data = tomllib.load(handle)
             if (project.path / "tests").exists():
                 _append_unique(
                     commands,
                     seen,
                     ValidationCommand("Pytest", ("uv", "run", "--locked", "pytest"), cwd),
                 )
-            if "ruff" in pyproject_text.lower():
+            if _has_ruff_configuration(pyproject_data):
                 _append_unique(
                     commands,
                     seen,
@@ -214,7 +253,11 @@ def discover_validation_commands(
                 package_data = json.loads(project.manifest.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 continue
+            if not isinstance(package_data, dict):
+                continue
             scripts = package_data.get("scripts", {})
+            if not isinstance(scripts, dict):
+                continue
             for script_name in ("typecheck", "test", "build"):
                 script = scripts.get(script_name)
                 if not isinstance(script, str):
@@ -232,6 +275,13 @@ def discover_validation_commands(
                 )
 
     return tuple(commands)
+
+
+def _has_ruff_configuration(data: Mapping[str, object]) -> bool:
+    tool = data.get("tool")
+    if not isinstance(tool, Mapping):
+        return False
+    return isinstance(tool.get("ruff"), Mapping)
 
 
 def _append_unique(

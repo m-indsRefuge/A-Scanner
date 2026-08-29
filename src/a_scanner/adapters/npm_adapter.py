@@ -8,19 +8,51 @@ from a_scanner.adapters.base import PackageAdapter
 from a_scanner.models import CommandResult, DependencyRecord, DetectedProject, ProjectRecord
 
 NPM_INVENTORY_FAILURE_NOTE = "npm outdated inspection failed; see command evidence."
+NPM_MANIFEST_FAILURE_NOTE = (
+    "npm package.json dependency inventory unavailable; invalid or unreadable JSON metadata."
+)
+NPM_LOCK_FAILURE_NOTE = (
+    "npm package-lock.json dependency inventory unavailable; invalid or unreadable JSON metadata."
+)
+_NPM_INVENTORY_FAILURE_NOTES = frozenset(
+    {
+        NPM_INVENTORY_FAILURE_NOTE,
+        NPM_MANIFEST_FAILURE_NOTE,
+        NPM_LOCK_FAILURE_NOTE,
+    }
+)
 
 
 def has_failed_npm_inventory(project: ProjectRecord) -> bool:
-    return project.ecosystem == "npm" and NPM_INVENTORY_FAILURE_NOTE in project.notes
+    return project.ecosystem == "npm" and any(
+        note in _NPM_INVENTORY_FAILURE_NOTES for note in project.notes
+    )
 
 
 class NpmAdapter(PackageAdapter):
     executable = "npm"
 
+    def __init__(self, runner, *, ignore_scripts: bool = True) -> None:
+        super().__init__(runner)
+        self.ignore_scripts = ignore_scripts
+
     def snapshot(self, project: DetectedProject) -> ProjectRecord:
-        package_data = json.loads(project.manifest.read_text(encoding="utf-8"))
+        try:
+            package_data = json.loads(project.manifest.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return self._inventory_failure(project, NPM_MANIFEST_FAILURE_NOTE)
+        if not isinstance(package_data, dict):
+            return self._inventory_failure(project, NPM_MANIFEST_FAILURE_NOTE)
+
         direct = self._read_direct(package_data)
-        resolved = self._read_lock(project.lockfile, direct)
+        try:
+            resolved = self._read_lock(project.lockfile, direct)
+        except (json.JSONDecodeError, OSError, ValueError):
+            return self._inventory_failure(
+                project,
+                NPM_LOCK_FAILURE_NOTE,
+                direct=direct,
+            )
 
         outdated_result = self.runner.run(
             ["npm", "outdated", "--all", "--json"],
@@ -46,12 +78,26 @@ class NpmAdapter(PackageAdapter):
         )
 
     def apply_compatible_update(self, project: DetectedProject) -> list[CommandResult]:
-        return [
-            self.runner.run(
-                ["npm", "update", "--save"],
-                cwd=project.path,
-            )
-        ]
+        argv = ["npm", "update", "--save"]
+        if self.ignore_scripts:
+            argv.append("--ignore-scripts")
+        return [self.runner.run(argv, cwd=project.path)]
+
+    def _inventory_failure(
+        self,
+        project: DetectedProject,
+        note: str,
+        *,
+        direct: list[DependencyRecord] | None = None,
+    ) -> ProjectRecord:
+        return ProjectRecord(
+            ecosystem="npm",
+            path=str(project.path),
+            manifest=str(project.manifest),
+            lockfile=str(project.lockfile),
+            direct_dependencies=list(direct or []),
+            notes=[note],
+        )
 
     def _read_direct(self, package_data: dict[str, Any]) -> list[DependencyRecord]:
         records: list[DependencyRecord] = []
@@ -82,6 +128,8 @@ class NpmAdapter(PackageAdapter):
         direct: list[DependencyRecord],
     ) -> list[DependencyRecord]:
         data = json.loads(lockfile.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("package-lock.json must contain a JSON object")
         direct_names = {item.name for item in direct}
         records: list[DependencyRecord] = []
 

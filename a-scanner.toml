@@ -2,8 +2,13 @@ schema_version = 1
 
 [scan]
 # Canonical environment, cache, test-workspace, and build exclusions are automatic.
-# Add repository-specific directory names here; entries are matched by directory name.
+# Add repository-specific directory names or repository-relative path/glob patterns here.
 exclude = []
+
+[npm]
+# npm lifecycle scripts are disabled during `npm update` by default.
+# Set false only for trusted repositories/packages that require install hooks.
+ignore_scripts = true
 
 [warning]
 patterns = [

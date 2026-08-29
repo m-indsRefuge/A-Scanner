@@ -2,6 +2,33 @@
 
 All notable changes to A-Scanner are documented here.
 
+## Unreleased
+
+Security and robustness hardening from the 2026-08-29 external Meta AI code audit, independently verified against the live repository before remediation.
+
+### Security
+
+- Disable npm lifecycle scripts during `npm update` by default with `--ignore-scripts`; trusted repositories may opt in with `[npm].ignore_scripts = false`.
+- Fail closed when non-ignored untracked files larger than 100 MiB would make worktree fingerprinting unbounded rather than silently omitting their contents.
+- Write JSON/text reports through atomic same-directory replacement and restrict report permissions to `0600` where POSIX permission semantics are available.
+- Bound configured warning regex length, reject obvious nested-repeat forms, and cache compiled patterns.
+- Resolve executable paths from the parent process PATH before applying command-specific environment overrides.
+
+### Fixed
+
+- Reject a missing explicitly requested `--config` file instead of silently falling back to defaults.
+- Convert invalid/unreadable npm `package.json` and `package-lock.json` input into deterministic inventory failures instead of uncaught JSON errors.
+- Treat unrecognized uv outdated JSON as unavailable inventory with preserved command evidence instead of silently reporting zero outdated dependencies.
+- Parse NUL-delimited Git status output so rename/copy records use the destination path correctly.
+- Fail with a Git guard error when detected project manifest/lockfile paths escape the repository.
+- Discover Ruff validation from actual `[tool.ruff]` TOML configuration instead of plain-text substring matches.
+- Honor repository-relative scan exclusions such as `packages/legacy` in addition to basename exclusions.
+- Clarify that a rejected in-repository report destination falls back to the default external report directory for its failure report.
+
+### Validation
+
+The hardening branch is covered by regression tests for the externally reported edge cases and cross-platform CI on Windows and Ubuntu with Python 3.12 and 3.13.
+
 ## 0.1.1 — 2026-08-28
 
 A-Scanner V0.1.1 hardens real-world Windows/npm behavior and repository-boundary safety without changing the project's deterministic design.

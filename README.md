@@ -24,6 +24,8 @@ A-Scanner itself contains **no LLM or agent runtime**. It is intentionally deter
 - Fail-closed handling when npm dependency inventory cannot be trusted
 - Linked Git worktree isolation through the default `.worktrees` discovery exclusion
 
+The current unreleased hardening work additionally disables npm lifecycle scripts during the update step by default, bounds validation fingerprinting of large untracked files, rejects missing explicit config paths, improves malformed inventory handling, and writes report evidence atomically.
+
 A-Scanner does not modify application source code, cross declared compatibility boundaries, replace abandoned libraries, upgrade runtimes, commit, push, or use an LLM at runtime.
 
 ## Install
@@ -84,6 +86,8 @@ Use an explicit configuration file:
 a-scan . --apply --config a-scanner.toml
 ```
 
+An explicitly requested config file must exist. A typo or missing `--config` path fails preflight rather than silently reverting to defaults.
+
 ## Project discovery
 
 A-Scanner recognizes only locked uv and npm projects. Recursive discovery always prunes these canonical directory names before inspection:
@@ -114,10 +118,10 @@ Repository configuration extends the canonical exclusion list; it does not repla
 schema_version = 1
 
 [scan]
-exclude = ["generated", "vendor-cache"]
+exclude = ["generated", "vendor-cache", "packages/legacy", "examples/tmp-*"]
 ```
 
-Exclusions are exact directory names rather than paths or glob expressions. A configured name is pruned wherever that directory occurs below the scanned repository. Matching follows platform path-case semantics. A-Scanner does not read or interpret `.gitignore` files for discovery.
+A configured exclusion without a path separator is matched against directory basenames wherever they occur. Repository-relative path/glob patterns can be used when a specific subtree should be excluded. Matching follows platform path-case semantics. A-Scanner does not read or interpret `.gitignore` files for discovery.
 
 ## Safety boundary
 
@@ -132,7 +136,16 @@ Exclusions are exact directory names rather than paths or glob expressions. A co
 5. Native package updates that keep `HEAD` unchanged and modify only detected manifest/lockfile paths in Git-visible state.
 6. A passing post-update validation gate that leaves the package-update state unchanged.
 
-A-Scanner fingerprints tracked changes and non-ignored untracked files around validation. If baseline validation changes `HEAD` or Git-visible content, A-Scanner restores the clean intake state and reports `baseline_failed`; failed restoration becomes `rollback_failed`.
+A-Scanner fingerprints tracked changes and non-ignored untracked files around validation. If a non-ignored untracked file exceeds 100 MiB, fingerprinting fails closed instead of silently skipping that content. If baseline validation changes `HEAD` or Git-visible content, A-Scanner restores the clean intake state and reports `baseline_failed`; failed restoration becomes `rollback_failed`.
+
+For npm updates, lifecycle scripts are disabled by default:
+
+```toml
+[npm]
+ignore_scripts = true
+```
+
+This causes A-Scanner's update step to use `npm update --save --ignore-scripts`. Set `ignore_scripts = false` only when trusted packages genuinely require npm install lifecycle hooks.
 
 Native package-manager updates may change the detected dependency manifests and lockfiles and may change ignored package environments. A successful updater that moves `HEAD` or changes any other Git-visible path is rejected and rolled back. A controlled exception after update execution begins also enters rollback rather than leaving partial update changes behind.
 
@@ -140,7 +153,9 @@ After dependency updates, a validation command that changes `HEAD`, changes Git-
 
 An explicit `--report-directory` must resolve outside the scanned repository; an in-repository destination is rejected and the preflight-failure report is written to the default external location.
 
-Package-manager and validation commands may resolve remote metadata, download packages, build distributions, execute package lifecycle hooks, and run repository code. Run A-Scanner only against repositories, package sources, and validation commands you trust.
+JSON and text reports are written atomically. On POSIX systems A-Scanner restricts them to mode `0600`. Reports can contain stdout/stderr from external package managers and validation commands, so treat the report directory as potentially sensitive evidence.
+
+Package-manager and validation commands may resolve remote metadata, download packages, build distributions, execute build backends, and run repository code. Disabling npm lifecycle scripts removes one execution path but **does not make `--apply` safe for untrusted repositories**. Run A-Scanner only against repositories, package sources, and validation commands you trust.
 
 For the detailed model, see [docs/SAFETY-MODEL.md](docs/SAFETY-MODEL.md).
 
@@ -151,13 +166,16 @@ For the detailed model, see [docs/SAFETY-MODEL.md](docs/SAFETY-MODEL.md).
 ```toml
 schema_version = 1
 
+[npm]
+ignore_scripts = true
+
 [[validation.commands]]
 name = "Tests"
 argv = ["uv", "run", "pytest"]
 cwd = "."
 ```
 
-`schema_version` must be the integer `1`. Configured warning patterns must be valid regular expressions. Invalid configuration is rejected during preflight with deterministic error evidence.
+`schema_version` must be the integer `1`. Configured warning patterns must be valid regular expressions, are limited to 256 characters, and obvious nested-repeat forms are rejected. Invalid configuration is rejected during preflight with deterministic error evidence.
 
 ## Project documentation
 

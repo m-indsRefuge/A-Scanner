@@ -196,7 +196,7 @@ class PostUpdateFailingNpmInventoryRunner(CommandRunner):
                 duration_seconds=0.0,
             )
 
-        if command == ["npm", "update", "--save"]:
+        if command == ["npm", "update", "--save", "--ignore-scripts"]:
             lockfile = cwd / "package-lock.json"
             lock_data = json.loads(lockfile.read_text(encoding="utf-8"))
             lock_data["packages"]["node_modules/demo"]["version"] = "1.0.1"

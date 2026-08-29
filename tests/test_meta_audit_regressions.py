@@ -264,7 +264,7 @@ def test_warning_patterns_reject_resource_exhaustion_shapes(
         encoding="utf-8",
     )
 
-    with pytest.raises(ConfigError, match="warning.*pattern"):
+    with pytest.raises(ConfigError, match=r"warning.*pattern"):
         load_config(tmp_path, None)
 
 

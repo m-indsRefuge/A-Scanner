@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           uv sync --all-groups --python 3.12 --locked
-          python -c "import a_scanner; assert a_scanner.__version__ == '0.1.2'"
+          uv run --python 3.12 python -c "import a_scanner; assert a_scanner.__version__ == '0.1.2'"
           rm -rf dist
           uv build
           test -f dist/a_scanner-0.1.2-py3-none-any.whl

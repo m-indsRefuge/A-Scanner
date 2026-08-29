@@ -4,6 +4,8 @@ All notable changes to A-Scanner are documented here.
 
 ## Unreleased
 
+## 0.1.2 — 2026-08-29
+
 Security and robustness hardening from the 2026-08-29 external Meta AI code audit, independently verified against the live repository before remediation.
 
 ### Security

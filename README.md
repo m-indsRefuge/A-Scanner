@@ -4,12 +4,12 @@ A-Scanner is a lightweight deterministic command-line tool for inspecting and sa
 
 It discovers supported Python/uv and Node/npm projects, records deprecation warnings, identifies dependency updates, applies only latest-compatible changes when requested, validates the repository before and after mutation, and rolls repository changes back when safety or validation gates fail.
 
-**Current release:** `v0.1.1`  
+**Current release:** `v0.1.2`
 **Status:** Alpha
 
 A-Scanner itself contains **no LLM or agent runtime**. It is intentionally deterministic. The project was developed through sustained human-AI engineering collaboration, but every scan and update decision performed by the released tool follows explicit code, package-manager output, configuration, and validation results.
 
-## What V0.1.1 supports
+## What V0.1.2 supports
 
 - Python projects using `uv` with `pyproject.toml` and `uv.lock`
 - Node projects using `npm` with `package.json` and `package-lock.json`
@@ -24,7 +24,7 @@ A-Scanner itself contains **no LLM or agent runtime**. It is intentionally deter
 - Fail-closed handling when npm dependency inventory cannot be trusted
 - Linked Git worktree isolation through the default `.worktrees` discovery exclusion
 
-The current unreleased hardening work additionally disables npm lifecycle scripts during the update step by default, bounds validation fingerprinting of large untracked files, rejects missing explicit config paths, improves malformed inventory handling, and writes report evidence atomically.
+V0.1.2 additionally disables npm lifecycle scripts during the update step by default, bounds validation fingerprinting of large untracked files, rejects missing explicit config paths, improves malformed inventory handling, and writes report evidence atomically.
 
 A-Scanner does not modify application source code, cross declared compatibility boundaries, replace abandoned libraries, upgrade runtimes, commit, push, or use an LLM at runtime.
 
@@ -32,12 +32,12 @@ A-Scanner does not modify application source code, cross declared compatibility 
 
 ### GitHub Release wheel
 
-The initial public distribution is a wheel attached to the GitHub Release for `v0.1.1`.
+The current public distribution is a wheel attached to the GitHub Release for `v0.1.2`.
 
-After downloading `a_scanner-0.1.1-py3-none-any.whl` from the Releases page:
+After downloading `a_scanner-0.1.2-py3-none-any.whl` from the Releases page:
 
 ```powershell
-uv tool install .\a_scanner-0.1.1-py3-none-any.whl
+uv tool install .\a_scanner-0.1.2-py3-none-any.whl
 ```
 
 Verify the installed command:

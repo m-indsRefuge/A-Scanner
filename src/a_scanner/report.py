@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from a_scanner.adapters.npm_adapter import has_failed_npm_inventory
@@ -57,20 +58,16 @@ def _atomic_write_text(path: Path, content: str) -> None:
         os.replace(temporary, path)
         _restrict_permissions(path)
     except Exception:
-        try:
+        with suppress(OSError):
             temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
         raise
 
 
 def _restrict_permissions(path: Path) -> None:
-    try:
+    # Windows ACLs do not map cleanly to POSIX chmod. Atomic creation still
+    # prevents a partially-written report from becoming authoritative.
+    with suppress(OSError):
         path.chmod(0o600)
-    except OSError:
-        # Windows ACLs do not map cleanly to POSIX chmod. Atomic creation still
-        # prevents a partially-written report from becoming authoritative.
-        pass
 
 
 def render_text(report: ScanReport) -> str:

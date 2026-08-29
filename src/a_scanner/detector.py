@@ -60,7 +60,10 @@ def _is_excluded(
     normalized_basename = os.path.normcase(basename)
     normalized_relative = os.path.normcase(relative_path.replace("\\", "/"))
     for pattern in patterns:
-        candidate = normalized_relative if "/" in pattern or "\\" in pattern else normalized_basename
+        if "/" in pattern or "\\" in pattern:
+            candidate = normalized_relative
+        else:
+            candidate = normalized_basename
         if fnmatchcase(candidate, pattern):
             return True
     return False

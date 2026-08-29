@@ -28,7 +28,7 @@ jobs:
       - name: Install Python
         run: uv python install 3.12
 
-      - name: Update release metadata
+      - name: Update version and release metadata
         shell: bash
         run: |
           set -euo pipefail
@@ -40,7 +40,7 @@ jobs:
               text = target.read_text(encoding="utf-8")
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"{path}: expected exactly one match for {old!r}, found {count}")
+                  raise SystemExit(f"{path}: expected one match for {old!r}, found {count}")
               target.write_text(text.replace(old, new, 1), encoding="utf-8")
 
           replace_once("pyproject.toml", 'version = "0.1.1"', 'version = "0.1.2"')
@@ -50,7 +50,7 @@ jobs:
               "## Unreleased\n\nSecurity and robustness hardening from the 2026-08-29 external Meta AI code audit, independently verified against the live repository before remediation.",
               "## Unreleased\n\n## 0.1.2 — 2026-08-29\n\nSecurity and robustness hardening from the 2026-08-29 external Meta AI code audit, independently verified against the live repository before remediation.",
           )
-          replace_once("README.md", "**Current release:** `v0.1.1`", "**Current release:** `v0.1.2`")
+          replace_once("README.md", "**Current release:** `v0.1.1`  \n", "**Current release:** `v0.1.2`\n")
           replace_once("README.md", "## What V0.1.1 supports", "## What V0.1.2 supports")
           replace_once(
               "README.md",
@@ -72,77 +72,10 @@ jobs:
               "uv tool install .\\a_scanner-0.1.1-py3-none-any.whl",
               "uv tool install .\\a_scanner-0.1.2-py3-none-any.whl",
           )
-
-          dollar = chr(36)
-          head_expr = dollar + "{{ github.event.workflow_run.head_sha }}"
-          token_expr = dollar + "{{ secrets.GITHUB_TOKEN }}"
-          lines = [
-              "name: Release v0.1.2",
-              "",
-              "on:",
-              "  workflow_run:",
-              '    workflows: ["CI"]',
-              "    types: [completed]",
-              "",
-              "permissions:",
-              "  contents: write",
-              "",
-              "jobs:",
-              "  publish:",
-              "    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'",
-              "    runs-on: ubuntu-latest",
-              "",
-              "    steps:",
-              "      - name: Checkout verified release commit",
-              "        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
-              "        with:",
-              f"          ref: {head_expr}",
-              "          fetch-depth: 0",
-              "",
-              "      - name: Install uv",
-              "        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0",
-              "        with:",
-              '          version: "0.12.2"',
-              "          enable-cache: true",
-              "",
-              "      - name: Install Python",
-              "        run: uv python install 3.12",
-              "",
-              "      - name: Verify, build, and smoke-test",
-              "        shell: bash",
-              "        run: |",
-              "          set -euo pipefail",
-              "          uv sync --all-groups --python 3.12 --locked",
-              "          python -c \"import a_scanner; assert a_scanner.__version__ == '0.1.2'\"",
-              "          rm -rf dist",
-              "          uv build",
-              "          test -f dist/a_scanner-0.1.2-py3-none-any.whl",
-              "          test -f dist/a_scanner-0.1.2.tar.gz",
-              "          uv venv /tmp/a-scanner-release-smoke --python 3.12",
-              "          uv pip install --python /tmp/a-scanner-release-smoke/bin/python dist/a_scanner-0.1.2-py3-none-any.whl",
-              "          test \"$(/tmp/a-scanner-release-smoke/bin/a-scan --version)\" = \"a-scan 0.1.2\"",
-              "          sha256sum dist/a_scanner-0.1.2-py3-none-any.whl dist/a_scanner-0.1.2.tar.gz > SHA256SUMS.txt",
-              "",
-              "      - name: Publish GitHub prerelease",
-              "        env:",
-              f"          GH_TOKEN: {token_expr}",
-              f"          RELEASE_SHA: {head_expr}",
-              "        shell: bash",
-              "        run: |",
-              "          set -euo pipefail",
-              "          if gh release view v0.1.2 >/dev/null 2>&1; then echo 'v0.1.2 already exists; refusing to overwrite it.'; exit 0; fi",
-              "          if git ls-remote --exit-code --tags origin refs/tags/v0.1.2 >/dev/null 2>&1; then echo 'Tag v0.1.2 exists without a matching release; refusing to mutate it.'; exit 1; fi",
-              "          printf '%s\\n' '# A-Scanner v0.1.2 — External Audit Hardening' '' 'This alpha release publishes the security and robustness hardening independently verified from the 2026-08-29 Meta AI code audit.' '' '## Highlights' '' '- npm lifecycle scripts are disabled during `npm update` by default; trusted repositories can explicitly opt in.' '- Missing explicit config paths and malformed npm/uv inventory now fail closed instead of producing misleading fallback results.' '- Git rename/copy parsing and repository-boundary checks were hardened.' '- Worktree fingerprinting rejects oversized non-ignored untracked files instead of consuming unbounded I/O.' '- Validation regexes are bounded and cached, report writes are atomic, and command resolution no longer trusts command-specific PATH overrides.' '' 'APPLY mode remains for trusted repositories only because configured/discovered validation commands can execute repository code.' '' '## Verification' '' 'The exact release commit passed CI on Windows and Ubuntu with Python 3.12 and 3.13 before publication. The release job rebuilt the artifacts from that verified commit and installed the wheel into a fresh Python 3.12 environment.' > RELEASE_NOTES.md",
-              '          printf "\\nRelease commit: `%s`\\n\\n## SHA-256\\n\\n```text\\n" "$RELEASE_SHA" >> RELEASE_NOTES.md',
-              "          cat SHA256SUMS.txt >> RELEASE_NOTES.md",
-              "          printf '```\\n' >> RELEASE_NOTES.md",
-              '          gh release create v0.1.2 dist/a_scanner-0.1.2-py3-none-any.whl dist/a_scanner-0.1.2.tar.gz SHA256SUMS.txt --target "$RELEASE_SHA" --title "A-Scanner v0.1.2 — External Audit Hardening" --notes-file RELEASE_NOTES.md --prerelease',
-          ]
-          Path(".github/workflows/release-v0.1.2.yml").write_text("\n".join(lines) + "\n", encoding="utf-8")
           Path(".github/workflows/prepare-v0.1.2.yml").unlink()
           PY
 
-      - name: Refresh lockfile and verify release metadata
+      - name: Refresh lockfile and verify release branch
         shell: bash
         run: |
           set -euo pipefail
